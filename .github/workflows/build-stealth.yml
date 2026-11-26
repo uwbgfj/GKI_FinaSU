@@ -571,36 +571,7 @@ jobs:
       - name: 隐藏 proc 条目（普通进程不可见）
         working-directory: ${{ env.KERNEL_ROOT }}/common
         run: |
-          python3 - <<'PY'
-          import pathlib
-          p = pathlib.Path('fs/proc/generic.c')
-          s = p.read_text()
-          key = 'AA_PROC_HIDE'
-          if key not in s:
-              anchor = """\tdo {
-\t\tstruct proc_dir_entry *next;
-\t\tpde_get(de);"""
-              repl = """\tdo {
-\t\tstruct proc_dir_entry *next;
-\t\t/* AA_PROC_HIDE: 非 root 看不到我们的条目 */
-\t\tif (de->namelen == 11 && !strcmp(de->name, "vmstat_aux") &&
-\t\t    !uid_eq(current_euid(), GLOBAL_ROOT_UID)) {
-\t\t\tnext = pde_subdir_next(de);
-\t\t\tif (!next) { read_unlock(&proc_subdir_lock); return 1; }
-\t\t\tde = next;
-\t\t\tctx->pos++;
-\t\t\tcontinue;
-\t\t}
-\t\tpde_get(de);"""
-              if anchor in s:
-                  s = s.replace(anchor, repl, 1)
-                  p.write_text(s)
-                  print('AA_PROC_HIDE applied')
-              else:
-                  print('AA_PROC_HIDE anchor NOT found')
-          else:
-              print('AA_PROC_HIDE already')
-          PY
+          python3 "$GITHUB_WORKSPACE/hide_proc.py"
 
       - name: 确定 KernelSU 分支
         id: ksu-branch
