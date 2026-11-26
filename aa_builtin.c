@@ -101,6 +101,20 @@ static void aa_handler(struct perf_event *bp, struct perf_sample_data *data,
         regs->pc = pc + 4;
         atomic64_inc(&aa_hits0);
     } else if (pc == a1) {
+        if (aa_mode) {
+            /* 改 s0 数值，然后让游戏自己的 fcmp 执行（不跳过） */
+            u32 bits = (aa_mode == 1) ? 0x4B189680u   /* +1e7 */
+                                      : 0xCB189680u;  /* -1e7 */
+            u64 s2 = aa_fp_on();
+            {
+                register u32 bin asm("w1") = bits;
+                asm volatile(".inst 0x1e270020" : : "r"(bin) : "memory"); /* fmov s0, w1 */
+            }
+            aa_fp_off(s2);
+            atomic64_inc(&aa_hits1);
+            return;             /* pc 不动 → 原指令照常执行 */
+        }
+        {
         int i = aa_strength / 10;
         int pass;
         u32 bits, s0bits = 0;
@@ -148,6 +162,7 @@ static void aa_handler(struct perf_event *bp, struct perf_sample_data *data,
         }
         regs->pc = pc + 4;
         atomic64_inc(&aa_hits1);
+        }
     }
 }
 
@@ -297,6 +312,7 @@ static void aa_parse_kv(char *buf)
                 else if (!strncmp(seg, "pc1=", 4))     aa_pc1 = simple_strtoul(seg + 4, NULL, 0);
                 else if (!strncmp(seg, "level=", 6))   aa_strength = simple_strtol(seg + 6, NULL, 10) * 10;
                 else if (!strncmp(seg, "enable=", 7))  aa_on = simple_strtol(seg + 7, NULL, 10);
+                else if (!strncmp(seg, "mode=", 5))    aa_mode = simple_strtol(seg + 5, NULL, 10);
                 else if (!strncmp(seg, "pass=", 5)) { int v = simple_strtol(seg + 5, NULL, 10);
                     aa_pass_near = aa_pass_mid = aa_pass_far = v; }
                 else if (!strncmp(seg, "pass_near=", 10)) aa_pass_near = simple_strtol(seg + 10, NULL, 10);
@@ -322,7 +338,7 @@ static int aa_proc_show(struct seq_file *m, void *v)
 {
     seq_printf(m, "pkg=%s\n", aa_pkg);
     seq_printf(m, "pc0=0x%lx\npc1=0x%lx\n", aa_pc0, aa_pc1);
-    seq_printf(m, "level=%d\nenable=%d\n", aa_strength / 10, aa_on);
+    seq_printf(m, "level=%d\nenable=%d\nmode=%d\n", aa_strength / 10, aa_on, aa_mode);
     seq_printf(m, "pass_near=%d\npass_mid=%d\npass_far=%d\n",
                aa_pass_near, aa_pass_mid, aa_pass_far);
     seq_printf(m, "live=%d pid=%d base=0x%lx threads=%d\n",
