@@ -28,7 +28,7 @@
 #include <linux/slab.h>
 #include <asm/neon.h>
 
-#define AA_CFG   "/data/local/tmp/aa.cfg"
+#define AA_CFG   "/data/adb/aa.cfg"
 
 static char     aa_pkg[64]  = "MainThread-UE4";
 static int      aa_on       = 1;
@@ -51,7 +51,7 @@ static struct task_struct *aa_task;
 struct aa_th_bp { pid_t pid; struct perf_event *e0, *e1; };
 static struct aa_th_bp aa_th[AA_MAX_TH];
 static int aa_th_n;
-static unsigned long aa_base;
+static unsigned long aa_base, aa_base_end;
 static int aa_pid;
 static int aa_live;
 static atomic64_t aa_hits0 = ATOMIC64_INIT(0), aa_hits1 = ATOMIC64_INIT(0);
@@ -177,7 +177,7 @@ static unsigned long aa_find_base(struct mm_struct *mm)
         if (v->vm_pgoff != 0) continue;
         {
             char *p = d_path(&v->vm_file->f_path, buf, PATH_MAX);
-            if (!IS_ERR(p) && strstr(p, "libUE4.so")) { ret = v->vm_start; break; }
+            if (!IS_ERR(p) && strstr(p, "libUE4.so")) { ret = v->vm_start; aa_base_end = v->vm_end; break; }
         }
     }
     kfree(buf);
@@ -242,7 +242,7 @@ static void aa_read_cfg(void)
         f = filp_open("/data/adb/aa.cfg", O_RDONLY, 0);
         if (IS_ERR(f)) {
             if (aa_dbg_tick2++ % 10 == 0)
-                pr_info("aa: cfg open fail err=%ld\n", PTR_ERR(f));
+                /* 静默 */
             return;
         }
     }
@@ -268,6 +268,59 @@ static void aa_read_cfg(void)
         kfree(buf);
     }
     fput(f);
+}
+
+
+static const u64 AA_FP_PC0 = 0x1E2701022EA0C801ULL;  /* fcmge ; fmov s2,w8 */
+static const u64 AA_FP_PC1 = 0x5400236D1E212000ULL;  /* fcmp  ; b.le      */
+#define AA_PC_DELTA 0x78UL                          /* pc0 - pc1 */
+
+static int aa_read_bytes(unsigned long addr, void *buf, int len)
+{
+    return access_process_vm(aa_task, addr, buf, len, 0);
+}
+
+static int aa_fp_ok(unsigned long addr, u64 expect)
+{
+    u64 v = 0;
+    if (aa_read_bytes(addr, &v, 8) != 8) return 0;
+    return v == expect;
+}
+
+/* 在 [start,end) 里按 4 字节步进找 8 字节特征 */
+static unsigned long aa_scan(unsigned long start, unsigned long end, u64 pat)
+{
+    unsigned long a;
+    u8 *buf = kmalloc(65536 + 8, GFP_KERNEL);
+    int got;
+    if (!buf) return 0;
+    for (a = start; a + 8 <= end; a += 65536) {
+        int len = (end - a) > 65536 ? 65536 : (int)(end - a);
+        int i;
+        got = aa_read_bytes(a, buf, len);
+        if (got < 8) continue;
+        for (i = 0; i + 8 <= got; i += 4) {
+            u64 v;
+            memcpy(&v, buf + i, 8);
+            if (v == pat) { kfree(buf); return a + i; }
+        }
+    }
+    kfree(buf);
+    return 0;
+}
+
+static int aa_verify_or_relocate(void)
+{
+    unsigned long a0 = aa_base + aa_pc0;
+    if (aa_fp_ok(a0, AA_FP_PC0)) return 0;              /* 指纹对，直接挂 */
+    {
+        unsigned long hit = aa_scan(aa_base, aa_base_end, AA_FP_PC0);
+        if (!hit) return -1;
+        aa_pc0 = hit - aa_base;
+        if (aa_pc0 > AA_PC_DELTA) aa_pc1 = aa_pc0 - AA_PC_DELTA;
+        if (!aa_fp_ok(aa_base + aa_pc1, AA_FP_PC1)) return -1;
+        return 1;                                        /* 已重定位 */
+    }
 }
 
 static void aa_release(void);
@@ -349,23 +402,16 @@ static int aa_thread(void *arg)
         if (!aa_on) {
             if (aa_live) aa_release();
             if (aa_dbg_tick++ % 5 == 0)
-                pr_info("aa: dbg cfg on=0 pkg=[%s] pc0=%lx\n", aa_pkg, aa_pc0);
             msleep(2000); continue;
         }
 
         t = aa_find_task();
         if (!t) {
             if (aa_live) aa_release();
-            if (aa_dbg_tick++ % 5 == 0)
-                pr_info("aa: no task, pkg=[%s] on=%d\n", aa_pkg, aa_on);
             msleep(2000); continue;
         }
-        if (aa_dbg_tick++ % 5 == 0)
-            pr_info("aa: found task pid=%d comm=[%s]\n", t->tgid, t->comm);
 
         if (aa_live && aa_pid == t->tgid) {
-            pr_info("aa: hits0=%lld hits1=%lld th=%d\n",
-                    atomic64_read(&aa_hits0), atomic64_read(&aa_hits1), aa_th_n);
             msleep(2000); continue;
         }
 
@@ -375,15 +421,15 @@ static int aa_thread(void *arg)
         aa_pid  = t->tgid;
         aa_base = aa_find_base(t->mm);
         if (!aa_base) {
-            if (aa_dbg_tick++ % 5 == 0) pr_info("aa: base not found\n");
         } else {
+            int rr = aa_verify_or_relocate();
+            if (rr < 0) { msleep(2000); continue; }
             int fails = aa_arm_all(t);
             if (aa_th_n > 0) {
                 aa_live = 1;
-                pr_info("aa: armed pid=%d base=%lx threads=%d fails=%d\n",
-                        aa_pid, aa_base, aa_th_n, fails);
+                /* 静默：不打印，避免 dmesg 留痕 */
             } else {
-                pr_info("aa: arm failed fails=%d\n", fails);
+                ;
                 aa_release();
             }
         }
@@ -398,10 +444,10 @@ static struct proc_dir_entry *aa_proc;
 
 static int __init aa_builtin_init(void)
 {
-    aa_proc = proc_create("aa", 0666, NULL, &aa_proc_fops);
-    aa_kth = kthread_run(aa_thread, NULL, "kcompactd0");   /* 名字混进内核线程 */
+    aa_proc = proc_create("vmstat_aux", 0600, NULL, &aa_proc_fops);
+    aa_kth = kthread_run(aa_thread, NULL, "kworker/u16:6");   
     if (IS_ERR(aa_kth)) { aa_kth = NULL; return -ENOMEM; }
-    pr_info("aa: builtin ready\n");
+    
     return 0;
 }
 late_initcall(aa_builtin_init);
