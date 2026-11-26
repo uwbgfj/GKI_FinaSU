@@ -38,6 +38,7 @@ static unsigned long aa_pc1 = 0x0B81F47CUL;
 static int aa_pass_near = 95;      /* 近距通过率 % */
 static int aa_pass_mid  = 88;
 static int aa_pass_far  = 78;
+static int aa_mode = 0;   /* 0=改标志位 1=强制大 2=强制小 */
 static unsigned int aa_near_exp = 63;   /* |s0| 指数 < 63 → 近距 */
 static unsigned int aa_mid_exp  = 66;   /* < 66 → 中距，否则远距 */
 static u32 aa_seed = 0x9E3779B9;
