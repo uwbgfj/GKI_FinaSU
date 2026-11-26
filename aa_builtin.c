@@ -239,7 +239,12 @@ static int aa_thread(void *arg)
         struct task_struct *t;
 
         aa_read_cfg();
-        if (!aa_on) { if (aa_live) aa_release(); msleep(2000); continue; }
+        if (!aa_on) {
+            if (aa_live) aa_release();
+            if (aa_dbg_tick++ % 5 == 0)
+                pr_info("aa: dbg cfg on=0 pkg=[%s] pc0=%lx\n", aa_pkg, aa_pc0);
+            msleep(2000); continue;
+        }
 
         t = aa_find_task();
         if (!t) {
