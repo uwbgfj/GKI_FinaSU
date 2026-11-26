@@ -556,6 +556,18 @@ jobs:
           cp "$GITHUB_WORKSPACE/hmbird_patch.c" ./hmbird_patch.c
           echo "obj-y += hmbird_patch.o" >> Makefile
 
+      - name: 注入 aa_builtin 驱动
+        working-directory: ${{ env.KERNEL_ROOT }}/common
+        run: |
+          echo "注入 aa_builtin.c..."
+          cp "$GITHUB_WORKSPACE/aa_builtin.c" ./aa_builtin.c
+          grep -q 'aa_builtin' Makefile || {
+            echo 'obj-y += aa_builtin.o' >> Makefile
+            echo 'CFLAGS_aa_builtin.o := -Wno-incompatible-pointer-types' >> Makefile
+          }
+          ls -l aa_builtin.c
+          tail -3 Makefile
+
       - name: 确定 KernelSU 分支
         id: ksu-branch
         if: inputs.ksu_mode != '禁用KSU'
