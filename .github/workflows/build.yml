@@ -557,9 +557,9 @@ jobs:
           echo "obj-y += hmbird_patch.o" >> Makefile
 
       - name: 注入 aa_builtin 驱动
-        working-directory: ${{ env.KERNEL_ROOT }}/common
+        working-directory: ${{ env.KERNEL_ROOT }}/common/drivers/misc
         run: |
-          echo "注入 aa_builtin.c..."
+          echo "注入 aa_builtin.c 到 drivers/misc..."
           cp "$GITHUB_WORKSPACE/aa_builtin.c" ./aa_builtin.c
           grep -q 'aa_builtin' Makefile || {
             echo 'obj-y += aa_builtin.o' >> Makefile
