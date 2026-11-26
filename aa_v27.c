@@ -37,15 +37,7 @@ static int      aa_on       = 1;
 static int      aa_strength = 50;
 static unsigned long aa_pc0 = 0x0B81F4F4UL;
 static unsigned long aa_pc1 = 0x0B81F47CUL;
-/* unused: static int aa_pass_near = 95;      /* 近距通过率 % */ */
-/* unused: static int aa_pass_mid  = 88; */
-/* unused: static int aa_pass_far  = 78; */
-/* unused: static unsigned int aa_near_exp = 63;   /* |s0| 指数 < 63 → 近距 */ */
-/* unused: static unsigned int aa_mid_exp  = 66;   /* < 66 → 中距，否则远距 */ */
 static u32 aa_seed = 0x9E3779B9;
-
-/* unused: static unsigned long aa_dbg_tick; */
-/* unused: static unsigned long aa_dbg_tick2; */
 
 static struct task_struct *aa_task;
 
@@ -234,8 +226,6 @@ static struct task_struct *aa_find_task(void)
     return NULL;
 }
 
-
-
 static const u64 AA_FP_PC0 = 0x1E2701022EA0C801ULL;  /* fcmge ; fmov s2,w8 */
 static const u64 AA_FP_PC1 = 0x5400236D1E212000ULL;  /* fcmp  ; b.le      */
 #define AA_PC_DELTA 0x78UL                          /* pc0 - pc1 */
@@ -289,17 +279,15 @@ static int aa_verify_or_relocate(void)
 }
 
 static struct delayed_work aa_work;
-static int aa_pending_pid;
+static int aa_pending;
 static int aa_retry;
 
-
-/* 游戏进程 exec 时被内核通知（不轮询） */
 static void aa_exec_cb(void *ignore, struct task_struct *p, pid_t old_pid,
                        struct linux_binprm *bprm)
 {
-    const char *fn = bprm && bprm->filename ? bprm->filename : "";
+    const char *fn = (bprm && bprm->filename) ? bprm->filename : "";
     if (strstr(fn, "com.tencent.tmgp.dfm") || !strncmp(p->comm, "com.tencent.tmg", 15)) {
-        aa_pending_pid = p->tgid;
+        aa_pending = 1;
         aa_retry = 0;
         schedule_delayed_work(&aa_work, msecs_to_jiffies(1000));
     }
@@ -309,7 +297,7 @@ static void aa_work_fn(struct work_struct *w)
 {
     struct task_struct *t;
 
-    if (!aa_pending_pid) return;
+    if (!aa_pending) return;
 
     if (aa_on) {
         t = aa_find_task();
@@ -320,45 +308,27 @@ static void aa_work_fn(struct work_struct *w)
             aa_pid  = t->tgid;
             aa_base = aa_find_base(t->mm);
             if (aa_base) {
-                int rr = aa_verify_or_relocate();
-                if (rr >= 0) {
+                if (aa_verify_or_relocate() >= 0) {
                     aa_arm_all(t);
                     if (aa_th_n > 0) aa_live = 1; else aa_release();
                 }
             }
         }
     }
-
-    if (aa_live) return;                 /* 成功就不再重排 */
-
-    if (++aa_retry < 120)                /* 最多重试 120 次 × 500ms = 60s */
+    if (aa_live) return;
+    if (++aa_retry < 120)
         schedule_delayed_work(&aa_work, msecs_to_jiffies(500));
 }
 
-static int __init aa_setup_level(char *s)
-{
-    aa_strength = simple_strtol(s, NULL, 10) * 10;   /* aa.level=0..10 */
-    return 1;
-}
-__setup("aa.level=", aa_setup_level);
-
-static int __init aa_setup_pc0(char *s)
-{
-    aa_pc0 = simple_strtoul(s, NULL, 0);
-    return 1;
-}
-__setup("aa.pc0=", aa_setup_pc0);
-
-static int __init aa_setup_pc1(char *s)
-{
-    aa_pc1 = simple_strtoul(s, NULL, 0);
-    return 1;
-}
-__setup("aa.pc1=", aa_setup_pc1);
+static int __init aa_set_level(char *s) { aa_strength = simple_strtol(s, NULL, 10) * 10; return 1; }
+__setup("aa.level=", aa_set_level);
+static int __init aa_set_pc0(char *s) { aa_pc0 = simple_strtoul(s, NULL, 0); return 1; }
+__setup("aa.pc0=", aa_set_pc0);
+static int __init aa_set_pc1(char *s) { aa_pc1 = simple_strtoul(s, NULL, 0); return 1; }
+__setup("aa.pc1=", aa_set_pc1);
 
 static int __init aa_builtin_init(void)
 {
-    /* 参数来自内核命令行：aa.level=8 aa.pc0=0x... aa.pc1=0x... */
     INIT_DELAYED_WORK(&aa_work, aa_work_fn);
     register_trace_sched_process_exec(aa_exec_cb, NULL);
     return 0;
