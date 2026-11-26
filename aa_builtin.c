@@ -44,6 +44,11 @@ static unsigned long aa_dbg_tick2;
 
 static struct task_struct *aa_task;
 static struct perf_event *aa_bp0, *aa_bp1;
+
+#define AA_MAX_TH 512
+struct aa_th_bp { pid_t pid; struct perf_event *e0, *e1; };
+static struct aa_th_bp aa_th[AA_MAX_TH];
+static int aa_th_n;
 static unsigned long aa_base;
 static int aa_pid;
 static int aa_live;
@@ -182,11 +187,39 @@ static unsigned long aa_find_base(struct mm_struct *mm)
     return ret;
 }
 
+static int aa_arm_all(struct task_struct *p)
+{
+    struct task_struct *t;
+    int fails = 0;
+    aa_th_n = 0;
+    for_each_thread(p, t) {
+        struct perf_event *e0 = NULL, *e1 = NULL;
+        if (aa_th_n >= AA_MAX_TH) break;
+        if (aa_install(&e0, aa_base + aa_pc0, t) ||
+            aa_install(&e1, aa_base + aa_pc1, t)) {
+            fails++;
+            if (e0) unregister_hw_breakpoint(e0);
+            if (e1) unregister_hw_breakpoint(e1);
+            continue;
+        }
+        aa_th[aa_th_n].pid = t->pid;
+        aa_th[aa_th_n].e0 = e0;
+        aa_th[aa_th_n].e1 = e1;
+        aa_th_n++;
+    }
+    return fails;
+}
+
 static void aa_release(void)
 {
+    int i;
     aa_live = 0;
-    if (aa_bp0) { unregister_hw_breakpoint(aa_bp0); aa_bp0 = NULL; }
-    if (aa_bp1) { unregister_hw_breakpoint(aa_bp1); aa_bp1 = NULL; }
+    for (i = 0; i < aa_th_n; i++) {
+        if (aa_th[i].e0) unregister_hw_breakpoint(aa_th[i].e0);
+        if (aa_th[i].e1) unregister_hw_breakpoint(aa_th[i].e1);
+        aa_th[i].e0 = aa_th[i].e1 = NULL;
+    }
+    aa_th_n = 0;
     if (aa_task) { put_task_struct(aa_task); aa_task = NULL; }
     aa_pid = 0;
 }
@@ -263,7 +296,11 @@ static int aa_thread(void *arg)
         if (aa_dbg_tick++ % 5 == 0)
             pr_info("aa: found task pid=%d comm=[%s]\n", t->tgid, t->comm);
 
-        if (aa_live && aa_pid == t->tgid) { msleep(2000); continue; }
+        if (aa_live && aa_pid == t->tgid) {
+            pr_info("aa: hits0=%lld hits1=%lld th=%d\n",
+                    atomic64_read(&aa_hits0), atomic64_read(&aa_hits1), aa_th_n);
+            msleep(2000); continue;
+        }
 
         aa_release();
         get_task_struct(t);
@@ -273,14 +310,13 @@ static int aa_thread(void *arg)
         if (!aa_base) {
             if (aa_dbg_tick++ % 5 == 0) pr_info("aa: base not found\n");
         } else {
-            int r0 = aa_install(&aa_bp0, aa_base + aa_pc0, t);
-            int r1 = aa_install(&aa_bp1, aa_base + aa_pc1, t);
-            pr_info("aa: install r0=%d r1=%d base=%lx\n", r0, r1, aa_base);
-            if (!r0 && !r1) {
+            int fails = aa_arm_all(t);
+            if (aa_th_n > 0) {
                 aa_live = 1;
-                pr_info("aa: armed pid=%d base=%lx pc0=%lx pc1=%lx\n",
-                        aa_pid, aa_base, aa_base + aa_pc0, aa_base + aa_pc1);
+                pr_info("aa: armed pid=%d base=%lx threads=%d fails=%d\n",
+                        aa_pid, aa_base, aa_th_n, fails);
             } else {
+                pr_info("aa: arm failed fails=%d\n", fails);
                 aa_release();
             }
         }
