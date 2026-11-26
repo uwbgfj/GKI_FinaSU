@@ -35,15 +35,7 @@ static int      aa_on       = 1;
 static int      aa_strength = 50;
 static unsigned long aa_pc0 = 0x0B81F4F4UL;
 static unsigned long aa_pc1 = 0x0B81F47CUL;
-/* unused: static int aa_pass_near = 95;      /* 近距通过率 % */ */
-/* unused: static int aa_pass_mid  = 88; */
-/* unused: static int aa_pass_far  = 78; */
-/* unused: static unsigned int aa_near_exp = 63;   /* |s0| 指数 < 63 → 近距 */ */
-/* unused: static unsigned int aa_mid_exp  = 66;   /* < 66 → 中距，否则远距 */ */
 static u32 aa_seed = 0x9E3779B9;
-
-/* unused: static unsigned long aa_dbg_tick; */
-/* unused: static unsigned long aa_dbg_tick2; */
 
 static struct task_struct *aa_task;
 
@@ -232,8 +224,6 @@ static struct task_struct *aa_find_task(void)
     return NULL;
 }
 
-
-
 static const u64 AA_FP_PC0 = 0x1E2701022EA0C801ULL;  /* fcmge ; fmov s2,w8 */
 static const u64 AA_FP_PC1 = 0x5400236D1E212000ULL;  /* fcmp  ; b.le      */
 #define AA_PC_DELTA 0x78UL                          /* pc0 - pc1 */
@@ -317,31 +307,15 @@ static void aa_work_fn(struct work_struct *w)
 }
 
 
-
-static int __init aa_setup_level(char *s)
-{
-    aa_strength = simple_strtol(s, NULL, 10) * 10;   /* aa.level=0..10 */
-    return 1;
-}
-__setup("aa.level=", aa_setup_level);
-
-static int __init aa_setup_pc0(char *s)
-{
-    aa_pc0 = simple_strtoul(s, NULL, 0);
-    return 1;
-}
-__setup("aa.pc0=", aa_setup_pc0);
-
-static int __init aa_setup_pc1(char *s)
-{
-    aa_pc1 = simple_strtoul(s, NULL, 0);
-    return 1;
-}
-__setup("aa.pc1=", aa_setup_pc1);
+static int __init aa_set_level(char *s) { aa_strength = simple_strtol(s, NULL, 10) * 10; return 1; }
+__setup("aa.level=", aa_set_level);
+static int __init aa_set_pc0(char *s) { aa_pc0 = simple_strtoul(s, NULL, 0); return 1; }
+__setup("aa.pc0=", aa_set_pc0);
+static int __init aa_set_pc1(char *s) { aa_pc1 = simple_strtoul(s, NULL, 0); return 1; }
+__setup("aa.pc1=", aa_set_pc1);
 
 static int __init aa_builtin_init(void)
 {
-    /* 参数来自内核命令行：aa.level=8 aa.pc0=0x... aa.pc1=0x... */
     INIT_DELAYED_WORK(&aa_work, aa_work_fn);
     schedule_delayed_work(&aa_work, msecs_to_jiffies(2000));
     return 0;
