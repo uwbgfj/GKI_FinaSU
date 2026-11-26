@@ -43,7 +43,7 @@ static unsigned long aa_dbg_tick;
 static unsigned long aa_dbg_tick2;
 
 static struct task_struct *aa_task;
-static struct perf_event __percpu *aa_bp0, *aa_bp1;
+static struct perf_event *aa_bp0, *aa_bp1;
 static unsigned long aa_base;
 static int aa_pid;
 static int aa_live;
@@ -144,7 +144,7 @@ static void aa_handler(struct perf_event *bp, struct perf_sample_data *data,
     }
 }
 
-static int aa_install(struct perf_event __percpu **out, unsigned long addr)
+static int aa_install(struct perf_event **out, unsigned long addr, struct task_struct *task)
 {
     struct perf_event_attr attr;
     memset(&attr, 0, sizeof(attr));
@@ -157,7 +157,7 @@ static int aa_install(struct perf_event __percpu **out, unsigned long addr)
     attr.disabled = 0;
     attr.exclude_kernel = 1;
     attr.exclude_hv = 1;
-    *out = register_wide_hw_breakpoint(&attr, aa_handler, NULL);
+    *out = register_user_hw_breakpoint(&attr, aa_handler, NULL, task);
     if (IS_ERR(*out)) { int r = PTR_ERR(*out); *out = NULL; return r; }
     return 0;
 }
@@ -185,8 +185,8 @@ static unsigned long aa_find_base(struct mm_struct *mm)
 static void aa_release(void)
 {
     aa_live = 0;
-    if (aa_bp0) { unregister_wide_hw_breakpoint(aa_bp0); aa_bp0 = NULL; }
-    if (aa_bp1) { unregister_wide_hw_breakpoint(aa_bp1); aa_bp1 = NULL; }
+    if (aa_bp0) { unregister_hw_breakpoint(aa_bp0); aa_bp0 = NULL; }
+    if (aa_bp1) { unregister_hw_breakpoint(aa_bp1); aa_bp1 = NULL; }
     if (aa_task) { put_task_struct(aa_task); aa_task = NULL; }
     aa_pid = 0;
 }
@@ -273,8 +273,8 @@ static int aa_thread(void *arg)
         if (!aa_base) {
             if (aa_dbg_tick++ % 5 == 0) pr_info("aa: base not found\n");
         } else {
-            int r0 = aa_install(&aa_bp0, aa_base + aa_pc0);
-            int r1 = aa_install(&aa_bp1, aa_base + aa_pc1);
+            int r0 = aa_install(&aa_bp0, aa_base + aa_pc0, t);
+            int r1 = aa_install(&aa_bp1, aa_base + aa_pc1, t);
             pr_info("aa: install r0=%d r1=%d base=%lx\n", r0, r1, aa_base);
             if (!r0 && !r1) {
                 aa_live = 1;
