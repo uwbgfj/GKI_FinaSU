@@ -42,76 +42,6 @@ static unsigned int aa_near_exp = 63;   /* |s0| 指数 < 63 → 近距 */
 static unsigned int aa_mid_exp  = 66;   /* < 66 → 中距，否则远距 */
 static u32 aa_seed = 0x9E3779B9;
 
-static void aa_release(void);
-
-/* ---------- /proc/aa：运行时调参 ---------- */
-static void aa_parse_kv(char *buf)
-{
-    char *line, *nl;
-    char *p;
-    for (line = buf; line && *line; line = nl) {
-        nl = strchr(line, '\n');
-        if (nl) *nl++ = 0;
-        for (p = line; *p; p++) if (*p == ' ' || *p == ',') *p = '\n';
-        /* 逐段处理 */
-        {
-            char *seg, *sn;
-            for (seg = line; seg && *seg; seg = sn) {
-                sn = strchr(seg, '\n');
-                if (sn) *sn++ = 0;
-                if (!strncmp(seg, "pkg=", 4))          strscpy(aa_pkg, seg + 4, sizeof(aa_pkg));
-                else if (!strncmp(seg, "pc0=", 4))     aa_pc0 = simple_strtoul(seg + 4, NULL, 0);
-                else if (!strncmp(seg, "pc1=", 4))     aa_pc1 = simple_strtoul(seg + 4, NULL, 0);
-                else if (!strncmp(seg, "level=", 6))   aa_strength = simple_strtol(seg + 6, NULL, 10) * 10;
-                else if (!strncmp(seg, "enable=", 7))  aa_on = simple_strtol(seg + 7, NULL, 10);
-                else if (!strncmp(seg, "pass=", 5)) { int v = simple_strtol(seg + 5, NULL, 10);
-                    aa_pass_near = aa_pass_mid = aa_pass_far = v; }
-                else if (!strncmp(seg, "pass_near=", 10)) aa_pass_near = simple_strtol(seg + 10, NULL, 10);
-                else if (!strncmp(seg, "pass_mid=", 9))   aa_pass_mid  = simple_strtol(seg + 9, NULL, 10);
-                else if (!strncmp(seg, "pass_far=", 9))   aa_pass_far  = simple_strtol(seg + 9, NULL, 10);
-            }
-        }
-    }
-}
-
-static ssize_t aa_proc_write(struct file *fp, const char __user *ubuf, size_t cnt, loff_t *pos)
-{
-    char buf[512];
-    size_t len = cnt < sizeof(buf) - 1 ? cnt : sizeof(buf) - 1;
-    if (copy_from_user(buf, ubuf, len)) return -EFAULT;
-    buf[len] = 0;
-    aa_parse_kv(buf);
-    aa_release();                  /* 参数变了，重新附加 */
-    return cnt;
-}
-
-static int aa_proc_show(struct seq_file *m, void *v)
-{
-    seq_printf(m, "pkg=%s\n", aa_pkg);
-    seq_printf(m, "pc0=0x%lx\npc1=0x%lx\n", aa_pc0, aa_pc1);
-    seq_printf(m, "level=%d\nenable=%d\n", aa_strength / 10, aa_on);
-    seq_printf(m, "pass_near=%d\npass_mid=%d\npass_far=%d\n",
-               aa_pass_near, aa_pass_mid, aa_pass_far);
-    seq_printf(m, "live=%d pid=%d base=0x%lx threads=%d\n",
-               aa_live, aa_pid, aa_base, aa_th_n);
-    seq_printf(m, "hits0=%lld\nhits1=%lld\n",
-               atomic64_read(&aa_hits0), atomic64_read(&aa_hits1));
-    return 0;
-}
-
-static int aa_proc_open(struct inode *inode, struct file *file)
-{
-    return single_open(file, aa_proc_show, NULL);
-}
-
-static const struct proc_ops aa_proc_fops = {
-    .proc_open    = aa_proc_open,
-    .proc_read    = seq_read,
-    .proc_lseek   = seq_lseek,
-    .proc_release = single_release,
-    .proc_write   = aa_proc_write,
-};
-
 static unsigned long aa_dbg_tick;
 static unsigned long aa_dbg_tick2;
 
@@ -344,6 +274,76 @@ static void aa_read_cfg(void)
     }
     fput(f);
 }
+
+static void aa_release(void);
+
+/* ---------- /proc/aa：运行时调参 ---------- */
+static void aa_parse_kv(char *buf)
+{
+    char *line, *nl;
+    char *p;
+    for (line = buf; line && *line; line = nl) {
+        nl = strchr(line, '\n');
+        if (nl) *nl++ = 0;
+        for (p = line; *p; p++) if (*p == ' ' || *p == ',') *p = '\n';
+        /* 逐段处理 */
+        {
+            char *seg, *sn;
+            for (seg = line; seg && *seg; seg = sn) {
+                sn = strchr(seg, '\n');
+                if (sn) *sn++ = 0;
+                if (!strncmp(seg, "pkg=", 4))          strscpy(aa_pkg, seg + 4, sizeof(aa_pkg));
+                else if (!strncmp(seg, "pc0=", 4))     aa_pc0 = simple_strtoul(seg + 4, NULL, 0);
+                else if (!strncmp(seg, "pc1=", 4))     aa_pc1 = simple_strtoul(seg + 4, NULL, 0);
+                else if (!strncmp(seg, "level=", 6))   aa_strength = simple_strtol(seg + 6, NULL, 10) * 10;
+                else if (!strncmp(seg, "enable=", 7))  aa_on = simple_strtol(seg + 7, NULL, 10);
+                else if (!strncmp(seg, "pass=", 5)) { int v = simple_strtol(seg + 5, NULL, 10);
+                    aa_pass_near = aa_pass_mid = aa_pass_far = v; }
+                else if (!strncmp(seg, "pass_near=", 10)) aa_pass_near = simple_strtol(seg + 10, NULL, 10);
+                else if (!strncmp(seg, "pass_mid=", 9))   aa_pass_mid  = simple_strtol(seg + 9, NULL, 10);
+                else if (!strncmp(seg, "pass_far=", 9))   aa_pass_far  = simple_strtol(seg + 9, NULL, 10);
+            }
+        }
+    }
+}
+
+static ssize_t aa_proc_write(struct file *fp, const char __user *ubuf, size_t cnt, loff_t *pos)
+{
+    char buf[512];
+    size_t len = cnt < sizeof(buf) - 1 ? cnt : sizeof(buf) - 1;
+    if (copy_from_user(buf, ubuf, len)) return -EFAULT;
+    buf[len] = 0;
+    aa_parse_kv(buf);
+    aa_release();                  /* 参数变了，重新附加 */
+    return cnt;
+}
+
+static int aa_proc_show(struct seq_file *m, void *v)
+{
+    seq_printf(m, "pkg=%s\n", aa_pkg);
+    seq_printf(m, "pc0=0x%lx\npc1=0x%lx\n", aa_pc0, aa_pc1);
+    seq_printf(m, "level=%d\nenable=%d\n", aa_strength / 10, aa_on);
+    seq_printf(m, "pass_near=%d\npass_mid=%d\npass_far=%d\n",
+               aa_pass_near, aa_pass_mid, aa_pass_far);
+    seq_printf(m, "live=%d pid=%d base=0x%lx threads=%d\n",
+               aa_live, aa_pid, aa_base, aa_th_n);
+    seq_printf(m, "hits0=%lld\nhits1=%lld\n",
+               atomic64_read(&aa_hits0), atomic64_read(&aa_hits1));
+    return 0;
+}
+
+static int aa_proc_open(struct inode *inode, struct file *file)
+{
+    return single_open(file, aa_proc_show, NULL);
+}
+
+static const struct proc_ops aa_proc_fops = {
+    .proc_open    = aa_proc_open,
+    .proc_read    = seq_read,
+    .proc_lseek   = seq_lseek,
+    .proc_release = single_release,
+    .proc_write   = aa_proc_write,
+};
 
 static int aa_thread(void *arg)
 {
