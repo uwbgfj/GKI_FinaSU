@@ -42,9 +42,6 @@ static unsigned int aa_near_exp = 63;   /* |s0| 指数 < 63 → 近距 */
 static unsigned int aa_mid_exp  = 66;   /* < 66 → 中距，否则远距 */
 static u32 aa_seed = 0x9E3779B9;
 
-/* unused: static unsigned long aa_dbg_tick; */
-static unsigned long aa_dbg_tick2;
-
 static struct task_struct *aa_task;
 
 #define AA_MAX_TH 512
@@ -240,11 +237,8 @@ static void aa_read_cfg(void)
     f = filp_open(AA_CFG, O_RDONLY, 0);
     if (IS_ERR(f)) {
         f = filp_open("/data/adb/aa.cfg", O_RDONLY, 0);
-        if (IS_ERR(f)) {
-            if (aa_dbg_tick2++ % 10 == 0)
-                /* 静默 */
+        if (IS_ERR(f))
             return;
-        }
     }
     buf = kzalloc(1024, GFP_KERNEL);
     if (buf) {
