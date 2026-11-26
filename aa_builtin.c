@@ -28,7 +28,7 @@
 
 #define AA_CFG   "/data/local/tmp/aa.cfg"
 
-static char     aa_pkg[64]  = "com.tencent.tmgp.dfm";
+static char     aa_pkg[64]  = "MainThread-UE4";
 static int      aa_on       = 1;
 static int      aa_strength = 40;
 static unsigned long aa_pc0 = 0x0B81F4F4UL;
@@ -206,7 +206,14 @@ static void aa_read_cfg(void)
     char *buf;
     loff_t pos = 0;
     f = filp_open(AA_CFG, O_RDONLY, 0);
-    if (IS_ERR(f)) return;
+    if (IS_ERR(f)) {
+        f = filp_open("/data/adb/aa.cfg", O_RDONLY, 0);
+        if (IS_ERR(f)) {
+            if (aa_dbg_tick2++ % 10 == 0)
+                pr_info("aa: cfg open fail err=%ld\n", PTR_ERR(f));
+            return;
+        }
+    }
     buf = kzalloc(1024, GFP_KERNEL);
     if (buf) {
         if (kernel_read(f, buf, 1023, &pos) > 0) {
@@ -232,6 +239,7 @@ static void aa_read_cfg(void)
 }
 
 static unsigned long aa_dbg_tick;
+static unsigned long aa_dbg_tick2;
 
 static int aa_thread(void *arg)
 {
