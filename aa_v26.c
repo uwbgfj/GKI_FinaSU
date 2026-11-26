@@ -35,15 +35,15 @@ static int      aa_on       = 1;
 static int      aa_strength = 50;
 static unsigned long aa_pc0 = 0x0B81F4F4UL;
 static unsigned long aa_pc1 = 0x0B81F47CUL;
-static int aa_pass_near = 95;      /* 近距通过率 % */
-static int aa_pass_mid  = 88;
-static int aa_pass_far  = 78;
-static unsigned int aa_near_exp = 63;   /* |s0| 指数 < 63 → 近距 */
-static unsigned int aa_mid_exp  = 66;   /* < 66 → 中距，否则远距 */
+/* unused: static int aa_pass_near = 95;      /* 近距通过率 % */ */
+/* unused: static int aa_pass_mid  = 88; */
+/* unused: static int aa_pass_far  = 78; */
+/* unused: static unsigned int aa_near_exp = 63;   /* |s0| 指数 < 63 → 近距 */ */
+/* unused: static unsigned int aa_mid_exp  = 66;   /* < 66 → 中距，否则远距 */ */
 static u32 aa_seed = 0x9E3779B9;
 
-static unsigned long aa_dbg_tick;
-static unsigned long aa_dbg_tick2;
+/* unused: static unsigned long aa_dbg_tick; */
+/* unused: static unsigned long aa_dbg_tick2; */
 
 static struct task_struct *aa_task;
 
