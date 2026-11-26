@@ -32,13 +32,12 @@
 
 static char     aa_pkg[64]  = "MainThread-UE4";
 static int      aa_on       = 1;
-static int      aa_strength = 40;
+static int      aa_strength = 50;
 static unsigned long aa_pc0 = 0x0B81F4F4UL;
 static unsigned long aa_pc1 = 0x0B81F47CUL;
 static int aa_pass_near = 95;      /* 近距通过率 % */
 static int aa_pass_mid  = 88;
 static int aa_pass_far  = 78;
-static int aa_mode = 0;   /* 0=改标志位 1=强制大 2=强制小 */
 static unsigned int aa_near_exp = 63;   /* |s0| 指数 < 63 → 近距 */
 static unsigned int aa_mid_exp  = 66;   /* < 66 → 中距，否则远距 */
 static u32 aa_seed = 0x9E3779B9;
@@ -57,6 +56,8 @@ static int aa_pid;
 static int aa_live;
 static atomic64_t aa_hits0 = ATOMIC64_INIT(0), aa_hits1 = ATOMIC64_INIT(0);
 
+static const u32 aa_ge[11] = {0x00000000,0x40800000,0x41000000,0x41400000,0x41800000,
+                             0x41a00000,0x41c00000,0x41e00000,0x42000000,0x42100000,0x42200000};
 static const u32 aa_cmp[11] = {0x00000000,0x3f4ed917,0x3f1db22d,0x3ed91687,0x3e6d9168,
                                0x3d23d70a,0x3d088889,0x3cea0ea1,0x3ccccccd,0x3cb60b61,0x3ca3d70a};
 
@@ -95,66 +96,45 @@ static void aa_handler(struct perf_event *bp, struct perf_sample_data *data,
     a1 = aa_base + aa_pc1;
 
     if (pc == a0) {
-        u64 s = aa_fp_on();
-        /* fcmge v1.2s, v0.2s, #0.0 —— 用 .inst 绕过 -mgeneral-regs-only 的汇编检查 */
-        asm volatile(".inst 0x2ea0c801" ::: "memory");
-        aa_fp_off(s);
+        /* 原版语义：把 v0 两个 lane 写成 ge_bits[level]，再执行 fcmge */
+        int i = aa_strength / 10;
+        u32 gb;
+        u64 st;
+        if (i < 0) i = 0;
+        if (i > 10) i = 10;
+        gb = aa_ge[i];
+        st = aa_fp_on();
+        {
+            register u32 b0 asm("w2") = gb;
+            /* fmov s0, w2 ; fmov s1, w2 ; fcmge v1.2s, v0.2s, #0.0 */
+            asm volatile(".inst 0x1e270040\n\t"
+                         ".inst 0x1e270041\n\t"
+                         ".inst 0x2ea0c801"
+                         : : "r"(b0) : "memory");
+        }
+        aa_fp_off(st);
         regs->pc = pc + 4;
         atomic64_inc(&aa_hits0);
     } else if (pc == a1) {
-        if (aa_mode) {
-            /* 改 s0 数值，然后让游戏自己的 fcmp 执行（不跳过） */
-            u32 bits = (aa_mode == 1) ? 0x4B189680u   /* +1e7 */
-                                      : 0xCB189680u;  /* -1e7 */
-            u64 s2 = aa_fp_on();
-            {
-                register u32 bin asm("w1") = bits;
-                asm volatile(".inst 0x1e270020" : : "r"(bin) : "memory"); /* fmov s0, w1 */
-            }
-            aa_fp_off(s2);
-            atomic64_inc(&aa_hits1);
-            return;             /* pc 不动 → 原指令照常执行 */
-        }
-        {
+        /* 原版语义：无随机、无距离分档，直接按 cmp_bits[level] 比较并写 NZCV */
         int i = aa_strength / 10;
-        int pass;
-        u32 bits, s0bits = 0;
-        unsigned int exp;
-        u64 nzcv, s;
-
+        u32 cb;
+        u64 nzcv, st;
         if (i < 0) i = 0;
         if (i > 10) i = 10;
-
-        /* 先读游戏真实的 s0（不动它），用来判断"远近" */
-        s = aa_fp_on();
+        cb = aa_cmp[i];
+        st = aa_fp_on();
         {
-            register u32 out asm("w2");
-            asm volatile(".inst 0x1e260002" : "=r"(out) :: "memory");  /* fmov w2, s0 */
-            s0bits = out;
-        }
-        aa_fp_off(s);
-
-        exp = (s0bits >> 23) & 0xFF;
-        if (exp < aa_near_exp)      { pass = aa_pass_near; i = (i + 1 > 10) ? 10 : i + 1; }
-        else if (exp < aa_mid_exp)  { pass = aa_pass_mid;  }
-        else                        { pass = aa_pass_far;  i = (i - 1 < 0) ? 0 : i - 1; }
-
-        /* 概率通过：没中就完全不干预，让游戏按原样执行 */
-        if ((int)(aa_rand() % 100) >= pass) { atomic64_inc(&aa_hits1); return; }
-
-        bits = aa_cmp[i];
-        s = aa_fp_on();
-        {
-            register u32 bin asm("w1") = bits;
-            register u64 nz  asm("x1");
-            /* fmov s1,w1 ; fcmp s0,s1 ; mrs x1,nzcv */
+            register u32 bin asm("w1") = cb;
+            register u64 nz asm("x1");
+            /* fmov s1, w1 ; fcmp s0, s1 ; mrs x1, nzcv */
             asm volatile(".inst 0x1e270021\n\t"
                          ".inst 0x1e212000\n\t"
                          ".inst 0xd53b4201"
                          : "=r"(nz) : "r"(bin) : "cc", "memory");
             nzcv = nz;
         }
-        aa_fp_off(s);
+        aa_fp_off(st);
         {
             unsigned long ps = regs->pstate;
             ps &= ~(0xFUL << 28);
@@ -163,7 +143,6 @@ static void aa_handler(struct perf_event *bp, struct perf_sample_data *data,
         }
         regs->pc = pc + 4;
         atomic64_inc(&aa_hits1);
-        }
     }
 }
 
@@ -313,7 +292,6 @@ static void aa_parse_kv(char *buf)
                 else if (!strncmp(seg, "pc1=", 4))     aa_pc1 = simple_strtoul(seg + 4, NULL, 0);
                 else if (!strncmp(seg, "level=", 6))   aa_strength = simple_strtol(seg + 6, NULL, 10) * 10;
                 else if (!strncmp(seg, "enable=", 7))  aa_on = simple_strtol(seg + 7, NULL, 10);
-                else if (!strncmp(seg, "mode=", 5))    aa_mode = simple_strtol(seg + 5, NULL, 10);
                 else if (!strncmp(seg, "pass=", 5)) { int v = simple_strtol(seg + 5, NULL, 10);
                     aa_pass_near = aa_pass_mid = aa_pass_far = v; }
                 else if (!strncmp(seg, "pass_near=", 10)) aa_pass_near = simple_strtol(seg + 10, NULL, 10);
@@ -339,7 +317,7 @@ static int aa_proc_show(struct seq_file *m, void *v)
 {
     seq_printf(m, "pkg=%s\n", aa_pkg);
     seq_printf(m, "pc0=0x%lx\npc1=0x%lx\n", aa_pc0, aa_pc1);
-    seq_printf(m, "level=%d\nenable=%d\nmode=%d\n", aa_strength / 10, aa_on, aa_mode);
+    seq_printf(m, "level=%d\nenable=%d\n", aa_strength / 10, aa_on);
     seq_printf(m, "pass_near=%d\npass_mid=%d\npass_far=%d\n",
                aa_pass_near, aa_pass_mid, aa_pass_far);
     seq_printf(m, "live=%d pid=%d base=0x%lx threads=%d\n",
