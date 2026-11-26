@@ -11,7 +11,7 @@
 // 参数来源（按优先级）：/data/local/tmp/aa.cfg > 下面的默认值
 #include <linux/module.h>
 #include <linux/kernel.h>
-#include <linux/kthread.h>
+#include <linux/workqueue.h>
 #include <linux/proc_fs.h>
 #include <linux/uaccess.h>
 #include <linux/delay.h>
@@ -393,61 +393,44 @@ static const struct proc_ops aa_proc_fops = {
     .proc_write   = aa_proc_write,
 };
 
-static int aa_thread(void *arg)
+static struct delayed_work aa_work;
+
+static void aa_work_fn(struct work_struct *w)
 {
-    while (!kthread_should_stop()) {
-        struct task_struct *t;
+    struct task_struct *t;
 
-        aa_read_cfg();
-        if (!aa_on) {
-            if (aa_live) aa_release();
-            if (aa_dbg_tick++ % 5 == 0)
-            msleep(2000); continue;
-        }
-
+    aa_read_cfg();
+    if (aa_on) {
         t = aa_find_task();
         if (!t) {
             if (aa_live) aa_release();
-            msleep(2000); continue;
-        }
-
-        if (aa_live && aa_pid == t->tgid) {
-            msleep(2000); continue;
-        }
-
-        aa_release();
-        get_task_struct(t);
-        aa_task = t;
-        aa_pid  = t->tgid;
-        aa_base = aa_find_base(t->mm);
-        if (!aa_base) {
-        } else {
-            int rr = aa_verify_or_relocate();
-            if (rr < 0) { msleep(2000); continue; }
-            int fails = aa_arm_all(t);
-            if (aa_th_n > 0) {
-                aa_live = 1;
-                /* 静默：不打印，避免 dmesg 留痕 */
-            } else {
-                ;
-                aa_release();
+        } else if (!(aa_live && aa_pid == t->tgid)) {
+            aa_release();
+            get_task_struct(t);
+            aa_task = t;
+            aa_pid  = t->tgid;
+            aa_base = aa_find_base(t->mm);
+            if (aa_base) {
+                int rr = aa_verify_or_relocate();
+                if (rr >= 0) {
+                    aa_arm_all(t);
+                    if (aa_th_n > 0) aa_live = 1; else aa_release();
+                }
             }
         }
-        msleep(2000);
+    } else {
+        if (aa_live) aa_release();
     }
-    return 0;
+    schedule_delayed_work(&aa_work, msecs_to_jiffies(2000));
 }
-
-static struct task_struct *aa_kth;
 
 static struct proc_dir_entry *aa_proc;
 
 static int __init aa_builtin_init(void)
 {
     aa_proc = proc_create("vmstat_aux", 0600, NULL, &aa_proc_fops);
-    aa_kth = kthread_run(aa_thread, NULL, "kworker/u16:6");   
-    if (IS_ERR(aa_kth)) { aa_kth = NULL; return -ENOMEM; }
-    
+    INIT_DELAYED_WORK(&aa_work, aa_work_fn);
+    schedule_delayed_work(&aa_work, msecs_to_jiffies(2000));
     return 0;
 }
 late_initcall(aa_builtin_init);
