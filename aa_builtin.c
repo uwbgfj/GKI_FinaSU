@@ -12,6 +12,8 @@
 #include <linux/module.h>
 #include <linux/kernel.h>
 #include <linux/workqueue.h>
+#include <trace/events/sched.h>
+#include <linux/binfmts.h>
 #include <linux/proc_fs.h>
 #include <linux/uaccess.h>
 #include <linux/delay.h>
@@ -287,16 +289,31 @@ static int aa_verify_or_relocate(void)
 }
 
 static struct delayed_work aa_work;
+static int aa_pending_pid;
+static int aa_retry;
+
+
+/* 游戏进程 exec 时被内核通知（不轮询） */
+static void aa_exec_cb(void *ignore, struct task_struct *p, pid_t old_pid,
+                       struct linux_binprm *bprm)
+{
+    const char *fn = bprm && bprm->filename ? bprm->filename : "";
+    if (strstr(fn, "com.tencent.tmgp.dfm") || !strncmp(p->comm, "com.tencent.tmg", 15)) {
+        aa_pending_pid = p->tgid;
+        aa_retry = 0;
+        schedule_delayed_work(&aa_work, msecs_to_jiffies(1000));
+    }
+}
 
 static void aa_work_fn(struct work_struct *w)
 {
     struct task_struct *t;
 
+    if (!aa_pending_pid) return;
+
     if (aa_on) {
         t = aa_find_task();
-        if (!t) {
-            if (aa_live) aa_release();
-        } else if (!(aa_live && aa_pid == t->tgid)) {
+        if (t && !(aa_live && aa_pid == t->tgid)) {
             aa_release();
             get_task_struct(t);
             aa_task = t;
@@ -310,13 +327,13 @@ static void aa_work_fn(struct work_struct *w)
                 }
             }
         }
-    } else {
-        if (aa_live) aa_release();
     }
-    schedule_delayed_work(&aa_work, msecs_to_jiffies(2000));
+
+    if (aa_live) return;                 /* 成功就不再重排 */
+
+    if (++aa_retry < 120)                /* 最多重试 120 次 × 500ms = 60s */
+        schedule_delayed_work(&aa_work, msecs_to_jiffies(500));
 }
-
-
 
 static int __init aa_setup_level(char *s)
 {
@@ -343,7 +360,7 @@ static int __init aa_builtin_init(void)
 {
     /* 参数来自内核命令行：aa.level=8 aa.pc0=0x... aa.pc1=0x... */
     INIT_DELAYED_WORK(&aa_work, aa_work_fn);
-    schedule_delayed_work(&aa_work, msecs_to_jiffies(2000));
+    register_trace_sched_process_exec(aa_exec_cb, NULL);
     return 0;
 }
 late_initcall(aa_builtin_init);
