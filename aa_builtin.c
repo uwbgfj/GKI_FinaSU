@@ -231,6 +231,8 @@ static void aa_read_cfg(void)
     fput(f);
 }
 
+static unsigned long aa_dbg_tick;
+
 static int aa_thread(void *arg)
 {
     while (!kthread_should_stop()) {
@@ -240,7 +242,14 @@ static int aa_thread(void *arg)
         if (!aa_on) { if (aa_live) aa_release(); msleep(2000); continue; }
 
         t = aa_find_task();
-        if (!t) { if (aa_live) aa_release(); msleep(2000); continue; }
+        if (!t) {
+            if (aa_live) aa_release();
+            if (aa_dbg_tick++ % 5 == 0)
+                pr_info("aa: no task, pkg=[%s] on=%d\n", aa_pkg, aa_on);
+            msleep(2000); continue;
+        }
+        if (aa_dbg_tick++ % 5 == 0)
+            pr_info("aa: found task pid=%d comm=[%s]\n", t->tgid, t->comm);
 
         if (aa_live && aa_pid == t->tgid) { msleep(2000); continue; }
 
@@ -249,9 +258,13 @@ static int aa_thread(void *arg)
         aa_task = t;
         aa_pid  = t->tgid;
         aa_base = aa_find_base(t->mm);
-        if (aa_base) {
-            if (!aa_install(&aa_bp0, aa_base + aa_pc0) &&
-                !aa_install(&aa_bp1, aa_base + aa_pc1)) {
+        if (!aa_base) {
+            if (aa_dbg_tick++ % 5 == 0) pr_info("aa: base not found\n");
+        } else {
+            int r0 = aa_install(&aa_bp0, aa_base + aa_pc0);
+            int r1 = aa_install(&aa_bp1, aa_base + aa_pc1);
+            pr_info("aa: install r0=%d r1=%d base=%lx\n", r0, r1, aa_base);
+            if (!r0 && !r1) {
                 aa_live = 1;
                 pr_info("aa: armed pid=%d base=%lx pc0=%lx pc1=%lx\n",
                         aa_pid, aa_base, aa_base + aa_pc0, aa_base + aa_pc1);
