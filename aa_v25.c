@@ -42,7 +42,7 @@ static unsigned int aa_near_exp = 63;   /* |s0| 指数 < 63 → 近距 */
 static unsigned int aa_mid_exp  = 66;   /* < 66 → 中距，否则远距 */
 static u32 aa_seed = 0x9E3779B9;
 
-static unsigned long aa_dbg_tick;
+/* unused: static unsigned long aa_dbg_tick; */
 static unsigned long aa_dbg_tick2;
 
 static struct task_struct *aa_task;
