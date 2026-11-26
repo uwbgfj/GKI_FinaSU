@@ -43,7 +43,6 @@ static unsigned long aa_dbg_tick;
 static unsigned long aa_dbg_tick2;
 
 static struct task_struct *aa_task;
-static struct perf_event *aa_bp0, *aa_bp1;
 
 #define AA_MAX_TH 512
 struct aa_th_bp { pid_t pid; struct perf_event *e0, *e1; };
